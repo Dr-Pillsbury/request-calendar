@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Separate Setting Request Calendar</title>
+
+<!-- Firebase compat SDKs (App + Firestore only) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<style>
+  body { font-family: Arial, sans-serif; padding: 20px; }
+
+  /* Calendar container */
+  #calendar { width: 100%; max-width: 1150px; margin: auto; }
+
+  /* Sticky month header with controls */
+  #month-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #ffffff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #ddd;
+  }
+
+  #month-label {
+    flex-grow: 1;
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    margin: 0 20px; /* space between buttons and text */
+  }
+
+  #prev-month,
+  #next-month {
+    padding: 6px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #f7f7f7;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  }
+
+  #prev-month:hover,
+  #next-month:hover {
+    background-color: #e0e0e0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    transform: translateY(-1px);
+  }
+
+  /* Signed-in user info */
+  #user-info {
+    text-align: right;
+    font-size: 11px;
+    margin-bottom: 8px;
+    color: #555;
+  }
+
+  /* Slim, fixed-width header row; bigger weekday labels */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 5px;
+    table-layout: fixed;            /* keeps columns fixed width */
+  }
+  th {
+    border: 1px solid #ccc;
+    padding: 4px 6px;
+    text-align: left;
+    height: 36px;                   /* shorter header height */
+    box-sizing: border-box;
+    background: #f0f0f0;
+    padding-left: 10px;
+    font-size: 1rem;                /* larger weekday font */
+    font-weight: 700;
+  }
+  td {
+    border: 1px solid #ccc;
+    padding: 4px 6px;
+    text-align: left;
+    vertical-align: top;
+    height: 140px;                  /* larger day cell height */
+    box-sizing: border-box;
+  }
+
+  .day-number {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 4px;
+    font-size: 0.9rem;
+  }
+
+  .clickable { cursor: pointer; }
+
+  /* Wrapper so requests scroll after ~8 items */
+  .request-list {
+    max-height: 105px;       /* tuned for about 8 entries */
+    overflow-y: auto;
+    padding-right: 2px;      /* room for scrollbar */
+  }
+
+  .request-item {
+    font-size: 12px;
+    margin-bottom: 3px;
+    padding: 4px 5px;
+    border-radius: 4px;
+    background: #f7f7f7;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    cursor: pointer;
+    transition: background-color 0.15s ease,
+                box-shadow 0.15s ease,
+                transform 0.1s ease,
+                filter 0.1s ease;
+  }
+
+  /* Hover effect for calendar entries */
+  .request-item:hover {
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+  }
+
+  .request-period-label {
+    font-weight: 700;
+    display: inline-block;
+    margin-right: 4px;
+  }
+
+  .request-count-label {
+    font-size: 11px;
+  }
+
+  /* Color coding for capacity levels */
+  .request-item.low {
+    background-color: #4caf50;   /* green: 1–6 */
+    color: #fff;
+    font-weight: bold;
+  }
+  .request-item.limited {
+    background-color: #ffeb3b;   /* yellow: 7–10 */
+    color: #000;
+    font-weight: bold;
+  }
+  .request-item.near-full {
+    background-color: #ff9800;   /* orange: 11–13 */
+    color: #000;
+    font-weight: bold;
+  }
+  .request-item.full {
+    background-color: #f44336;   /* red: 14–15 */
+    color: #fff;
+    font-weight: bold;
+  }
+
+  /* Modals */
+  #modal, #edit-modal, #details-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-content {
+    background: white;
+    padding: 18px;
+    width: 380px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border-radius: 10px;
+  }
+  label { display:block; margin-top: 8px; }
+  select, input, textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 6px;
+    box-sizing: border-box;
+  }
+
+  #capacity-indicator, #edit-capacity-indicator {
+    margin-top: 8px;
+    padding: 6px;
+    border-radius: 6px;
+    text-align: center;
+    color: #fff;
+    font-size: 12px;
+  }
+
+  /* Tiny legend under the calendar */
+  #legend {
+    margin-top: 8px;
+    font-size: 11px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+  }
+
+  /* Details modal styles */
+  .details-entry {
+    border-bottom: 1px solid #eee;
+    padding: 6px 0;
+    font-size: 12px;
+  }
+  .details-entry:last-child {
+    border-bottom: none;
+  }
+  .details-meta {
+    margin-bottom: 3px;
+    font-size: 15px;      /* larger + bold for clarity */
+    font-weight: 700;
+  }
+  .details-notes {
+    font-style: italic;
+    font-size: 11px;
+  }
+  .details-actions {
+    text-align: right;
+    margin-top: 4px;
+  }
+  .details-actions button {
+    font-size: 11px;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+  /* Sign-in modal (uses same modal pattern) */
+#signin-modal {
+  display: none;
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6);
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+</style>
+</head>
+<body>
+<div id="calendar">
+  <!-- Sticky month header with prev/next buttons -->
+  <div id="month-header">
+    <button id="prev-month" onclick="changeMonth(-1)">&larr; Previous</button>
+    <h2 id="month-label"></h2>
+    <button id="next-month" onclick="changeMonth(1)">Next &rarr;</button>
+  </div>
+
+  <!-- Pseudo sign-in: last name entry -->
+  <div id="user-info">
+    <span id="user-label">Not signed in</span>
+    <input
+      id="lastname-input"
+      type="text"
+      placeholder="Enter your last name"
+      style="margin-left:8px; padding:3px 6px; font-size:11px; width:130px;"
+    />
+    <button
+      id="signin-btn"
+      style="margin-left:4px; padding:3px 8px; font-size:11px; cursor:pointer;"
+    >
+      Set name
+    </button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Monday</th>
+        <th>Tuesday</th>
+        <th>Wednesday</th>
+        <th>Thursday</th>
+        <th>Friday</th>
+      </tr>
+    </thead>
+    <tbody id="calendar-body"></tbody>
+  </table>
+
+  <!-- Tiny color legend -->
+  <div id="legend">
+    <div class="legend-item">
+      <span class="legend-color" style="background:#4caf50;"></span>
+      <span>1–6 students</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background:#ffeb3b;"></span>
+      <span>7–10 students (limited)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background:#ff9800;"></span>
+      <span>11–13 students (near full)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background:#f44336;"></span>
+      <span>14–15 students (full)</span>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE REQUEST MODAL -->
+<div id="modal">
+  <div class="modal-content">
+    <h3 id="modal-date"></h3>
+
+    <label for="period-select">Period:</label>
+    <select id="period-select"><option value="">-- No specific period --</option></select>
+
+    <div id="capacity-indicator">Select a period and enter students to see capacity.</div>
+
+    <label for="student-count">Number of students:</label>
+    <input type="number" id="student-count" min="1" max="15" />
+
+    <label for="subject">Subject:</label>
+    <input type="text" id="subject" />
+
+    <label for="grade-level">Grade level:</label>
+    <select id="grade-level">
+      <option value="">-- Select grade --</option>
+      <option value="9th">9th</option>
+      <option value="10th">10th</option>
+      <option value="11th">11th</option>
+      <option value="12th">12th</option>
+    </select>
+
+    <label for="notes">Notes:</label>
+    <textarea id="notes" rows="3"></textarea>
+
+    <div style="text-align:right; margin-top:10px;">
+      <button onclick="submitRequest()">Submit</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT/DELETE MODAL -->
+<div id="edit-modal">
+  <div class="modal-content">
+    <h3 id="edit-modal-date"></h3>
+
+    <label>Edit Period:</label>
+    <select id="edit-period-select"><option value="">-- No specific period --</option></select>
+
+    <div id="edit-capacity-indicator">Adjust period/students to see capacity.</div>
+
+    <label>Edit Number of Students:</label>
+    <input type="number" id="edit-student-count" min="1" max="15" />
+
+    <label>Edit Subject:</label>
+    <input type="text" id="edit-subject" />
+
+    <label>Edit Grade Level:</label>
+    <select id="edit-grade-level">
+      <option value="">-- Select grade --</option>
+      <option value="9th">9th</option>
+      <option value="10th">10th</option>
+      <option value="11th">11th</option>
+      <option value="12th">12th</option>
+    </select>
+
+    <label>Edit Notes:</label>
+    <textarea id="edit-notes" rows="3"></textarea>
+
+    <div style="text-align:right; margin-top:10px;">
+      <button onclick="saveEdit()">Save</button>
+      <button onclick="deleteRequest()" style="background:#d9534f;color:white;">Delete</button>
+      <button onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETAILS MODAL (per period per day) -->
+<div id="details-modal">
+  <div class="modal-content">
+    <h3 id="details-title"></h3>
+    <div id="details-body"></div>
+    <div style="text-align:right; margin-top:10px;">
+      <button onclick="closeDetailsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIGN-IN REQUIRED MODAL (Google Sites safe) -->
+<div id="signin-modal">
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Sign in to make changes</h3>
+    <div style="font-size:13px; margin-bottom:10px;">
+      Enter your <b>last name</b> to enable creating/editing requests.
+    </div>
+
+    <label for="signin-lastname">Last name:</label>
+    <input id="signin-lastname" type="text" placeholder="e.g., Hood" />
+
+    <div style="text-align:right; margin-top:10px;">
+      <button id="signin-save-btn">Continue</button>
+      <button id="signin-cancel-btn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ----- Firebase initialization -----
+const firebaseConfig = {
+  apiKey: "AIzaSyDWiD-kmk6KG_o9xHErfI8cgl4jUXc-1f4",
+  authDomain: "separate-setting-backend.firebaseapp.com",
+  projectId: "separate-setting-backend",
+  storageBucket: "separate-setting-backend.firebasestorage.app",
+  messagingSenderId: "1048199084638",
+  appId: "1:1048199084638:web:5768e63a2a51e0b0ea52cf",
+  measurementId: "G-ZXFCH04PGM"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// ----- Calendar + data logic -----
+const minYear = 2025;
+const maxYear = 2099;
+
+/* Single Period 5 in UI */
+const periods = [
+  "Period 1","Period 2","Period 3","Period 4",
+  "Period 5","Period 6","Period 7"
+];
+
+/* Normalize older "Period 5 (9th/10th)" entries into "Period 5" */
+function normalizePeriod(p) {
+  if (!p) return "";
+  if (p.startsWith("Period 5")) return "Period 5";
+  return p;
+}
+
+let counts = {};      // per date+period (normalized)
+let requests = {};    // per date, list of requests
+let currentTeacherLastName = "";
+
+let today = new Date();
+let currentMonth = today.getMonth();
+let currentYear = today.getFullYear();
+let activeDate = null;
+let editing = null;  // { dateKey, index }
+
+let pendingDateKey = null;
+let unsubscribeListener = null;
+
+/* Color for capacity indicator based on TOTAL students */
+function capacityColor(total) {
+  if (total <= 6) return "#4caf50";     // green
+  if (total <= 10) return "#ffeb3b";    // yellow
+  if (total <= 13) return "#ff9800";    // orange
+  return "#f44336";                     // red (14–15)
+}
+
+/* Start realtime listener to Firestore (read allowed for everyone) */
+function startRealtimeListener() {
+  if (unsubscribeListener) {
+    unsubscribeListener();
+    unsubscribeListener = null;
+  }
+
+  unsubscribeListener = db.collection("requests").onSnapshot(
+    (snapshot) => {
+      counts = {};
+      requests = {};
+
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const rawPeriod = data.period || "";
+        const period = normalizePeriod(rawPeriod);
+        const dateKey = data.dateKey;
+        const num = Number(data.num) || 0;
+        const subject = data.subject || "";
+        const grade = data.grade || "";
+        const notes = data.notes || "";
+        const teacherLastName = data.teacherLastName || "";
+        const teacherEmail = data.teacherEmail || "";
+        const teacherName = data.teacherName || "";
+
+        if (!dateKey) return;
+
+        if (!requests[dateKey]) requests[dateKey] = [];
+        requests[dateKey].push({
+          id: docSnap.id,
+          period,
+          num,
+          subject,
+          grade,
+          notes,
+          teacherLastName,
+          teacherEmail,
+          teacherName
+        });
+
+        if (period) {
+          const key = `${dateKey}-${period}`;
+          counts[key] = (counts[key] || 0) + num;
+        }
+      });
+
+      renderCalendar();
+    },
+    (error) => {
+  console.error("Realtime listener error:", error);
+  const label = document.getElementById('user-label');
+  if (label) label.textContent = `Realtime error: ${error.message}`;
+}
+  );
+}
+
+function renderCalendar() {
+  const body = document.getElementById("calendar-body");
+  body.innerHTML = "";
+
+  const monthLabel = document.getElementById("month-label");
+  const monthName = new Date(currentYear, currentMonth).toLocaleString('default', { month: 'long' });
+  monthLabel.textContent = `${monthName} ${currentYear}`;
+
+  const lastDay = new Date(currentYear, currentMonth + 1, 0);
+
+  let row = document.createElement('tr');
+  let started = false;
+
+  for (let day = 1; day <= lastDay.getDate(); day++) {
+    const date = new Date(currentYear, currentMonth, day);
+    const jsWeekday = date.getDay(); // Sun=0 ... Sat=6
+    if (jsWeekday === 0 || jsWeekday === 6) continue; // skip weekends
+
+    const weekdayIndex = (jsWeekday + 6) % 7; // Mon=0..Fri=4
+
+    if (!started) {
+      for (let e = 0; e < weekdayIndex; e++) row.appendChild(document.createElement('td'));
+      started = true;
+    }
+
+    const cell = document.createElement('td');
+    const dateKey = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+
+    const number = document.createElement('span');
+    number.className = 'day-number';
+    number.textContent = day;
+    cell.appendChild(number);
+
+    // Scrollable list for aggregated period entries
+    const list = document.createElement('div');
+    list.className = 'request-list';
+    cell.appendChild(list);
+
+    // Clicking empty space in the cell opens new request modal
+    cell.onclick = () => openModal(dateKey);
+
+    if (requests[dateKey]) {
+      // Group requests by normalized period (or 'General' if no period)
+      const grouped = {};
+      requests[dateKey].forEach((r, idx) => {
+        const p = r.period ? normalizePeriod(r.period) : "General";
+        if (!grouped[p]) grouped[p] = { total: 0, entries: [] };
+        grouped[p].total += r.num;
+        grouped[p].entries.push({ r, idx });
+      });
+
+      // Sort periods: 'General' first, then by periods array order
+      const periodNames = Object.keys(grouped).sort((a, b) => {
+        if (a === "General" && b === "General") return 0;
+        if (a === "General") return -1;
+        if (b === "General") return 1;
+        return periods.indexOf(a) - periods.indexOf(b);
+      });
+
+      periodNames.forEach((p) => {
+        const total = grouped[p].total;
+
+        let levelClass = "";
+        if (total >= 14) levelClass = "full";
+        else if (total >= 11) levelClass = "near-full";
+        else if (total >= 7) levelClass = "limited";
+        else if (total >= 1) levelClass = "low";
+
+        const div = document.createElement('div');
+        div.className = 'request-item';
+        if (levelClass) div.classList.add(levelClass);
+
+        if (total > 0) {
+          const periodSpan = document.createElement('span');
+          periodSpan.className = 'request-period-label';
+          periodSpan.textContent = p === "General" ? "General" : p;
+
+          const countSpan = document.createElement('span');
+          countSpan.className = 'request-count-label';
+          countSpan.textContent = `— ${total} student${total > 1 ? 's' : ''}`;
+
+          // Only full periods need "(FULL)" label; others explained by legend
+          if (levelClass === "full") {
+            countSpan.textContent += " (FULL)";
+          }
+
+          div.appendChild(periodSpan);
+          div.appendChild(countSpan);
+        }
+
+        // Clicking a period shows the details modal (subject, grade, notes per request)
+        div.onclick = (ev) => {
+          ev.stopPropagation(); // don't trigger cell's openModal
+          openDetailsModal(dateKey, p);
+        };
+
+        list.appendChild(div);
+      });
+    }
+
+    row.appendChild(cell);
+
+    if (weekdayIndex === 4) {
+      body.appendChild(row);
+      row = document.createElement('tr');
+      started = false;
+    }
+  }
+  if (row.children.length) body.appendChild(row);
+}
+
+function changeMonth(dir) {
+  currentMonth += dir;
+  if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+  if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+  if (currentYear < minYear) currentYear = minYear;
+  if (currentYear > maxYear) currentYear = maxYear;
+  renderCalendar();
+}
+
+function updateCapacityIndicator(dateKey, period, plannedNum, elementId, excludeIndex) {
+  const indicator = document.getElementById(elementId);
+  if (!period) {
+    indicator.style.backgroundColor = '#777';
+    indicator.textContent = 'No specific period selected.';
+    return;
+  }
+
+  period = normalizePeriod(period);
+
+  let current = counts[`${dateKey}-${period}`] || 0;
+
+  // When editing, subtract the existing request for that index (so we don't double-count)
+  if (typeof excludeIndex === 'number' && requests[dateKey]) {
+    const r = requests[dateKey][excludeIndex];
+    if (r && normalizePeriod(r.period) === period) {
+      current -= r.num;
+    }
+  }
+
+  const total = current + (plannedNum || 0);
+  indicator.style.backgroundColor = capacityColor(total);
+  const remaining = Math.max(15 - current, 0);
+
+  indicator.textContent =
+    `Current total for ${period}: ${current} | Remaining capacity: ${remaining} | With this request: ${total}/15`;
+}
+
+/* Pseudo sign-in: set currentTeacherLastName */
+function setSignedInName() {
+  const input = document.getElementById('lastname-input');
+  if (!input) return;
+
+  const raw = input.value.trim();
+  if (!raw) {
+    const label = document.getElementById('user-label');
+    if (label) label.textContent = 'Please enter your last name to sign in.';
+    return;
+  }
+
+  // Capitalize nicely: "hood" -> "Hood"
+  currentTeacherLastName = raw.charAt(0).toUpperCase() + raw.slice(1);
+
+  const label = document.getElementById('user-label');
+  if (label) label.textContent = `Signed in as: ${currentTeacherLastName}`;
+
+  input.value = "";
+}
+
+// Wire up the pseudo sign-in button + Enter key
+const signinBtn = document.getElementById('signin-btn');
+if (signinBtn) {
+  signinBtn.onclick = setSignedInName;
+}
+
+const lastnameInput = document.getElementById('lastname-input');
+if (lastnameInput) {
+  lastnameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      setSignedInName();
+    }
+  });
+}
+
+function openSignInModal(message, dateKeyToOpen) {
+  pendingDateKey = dateKeyToOpen || null;
+
+  const modal = document.getElementById('signin-modal');
+  const input = document.getElementById('signin-lastname');
+
+  const label = document.getElementById('user-label');
+  if (label && message) label.textContent = message;
+
+  if (modal) modal.style.display = 'flex';
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 0);
+  }
+}
+
+function closeSignInModal() {
+  const modal = document.getElementById('signin-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function saveSignInFromModal() {
+  const input = document.getElementById('signin-lastname');
+  const raw = (input && input.value ? input.value.trim() : '');
+
+  if (!raw) {
+    // Keep it simple + visible in Google Sites sandbox
+    const label = document.getElementById('user-label');
+    if (label) label.textContent = 'Please enter your last name to sign in.';
+    if (input) input.focus();
+    return;
+  }
+
+  // Capitalize nicely
+  currentTeacherLastName = raw.charAt(0).toUpperCase() + raw.slice(1);
+
+  const label = document.getElementById('user-label');
+  if (label) label.textContent = `Signed in as: ${currentTeacherLastName}`;
+
+  closeSignInModal();
+    // If the user clicked a day cell before signing in, open it now
+  if (pendingDateKey) {
+    const dk = pendingDateKey;
+    pendingDateKey = null;
+    openModal(dk);
+  }
+}
+
+// Wire buttons
+const signInSaveBtn = document.getElementById('signin-save-btn');
+if (signInSaveBtn) signInSaveBtn.onclick = saveSignInFromModal;
+
+const signInCancelBtn = document.getElementById('signin-cancel-btn');
+if (signInCancelBtn) signInCancelBtn.onclick = closeSignInModal;
+
+// Enter key in modal input
+const signInModalInput = document.getElementById('signin-lastname');
+if (signInModalInput) {
+  signInModalInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSignInFromModal();
+    }
+  });
+}
+
+function openModal(dateKey) {
+  // HARD BLOCK: if not signed in, ONLY show sign-in modal
+  if (!currentTeacherLastName) {
+    closeModal();        // just in case
+    closeEditModal();    // just in case
+    closeDetailsModal(); // just in case
+    openSignInModal('Please enter your last name to sign in before making a request.', dateKey);
+    return;
+  }
+  activeDate = dateKey;
+  document.getElementById('modal-date').textContent = `Request for ${dateKey}`;
+
+  const sel = document.getElementById('period-select');
+  sel.innerHTML = '<option value="">-- No specific period --</option>';
+
+  periods.forEach(p => {
+    const normP = normalizePeriod(p);
+    const option = document.createElement('option');
+    const current = counts[`${dateKey}-${normP}`] || 0;
+    const remaining = 15 - current;
+    option.value = normP;
+    if (remaining <= 0) {
+      option.textContent = `${normP} (FULL)`;
+      option.disabled = true; // cannot request more in this period
+    } else {
+      option.textContent = `${normP} (${remaining} left)`;
+    }
+    sel.appendChild(option);
+  });
+
+  document.getElementById('student-count').value = '';
+  document.getElementById('subject').value = '';
+  document.getElementById('grade-level').value = '';
+  document.getElementById('notes').value = '';
+
+  sel.onchange = updateNewCapacity;
+  document.getElementById('student-count').oninput = updateNewCapacity;
+
+  updateNewCapacity();
+
+  document.getElementById('modal').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+}
+
+function updateNewCapacity() {
+  const period = document.getElementById('period-select').value;
+  const num = parseInt(document.getElementById('student-count').value, 10) || 0;
+  updateCapacityIndicator(activeDate, period, num, 'capacity-indicator');
+}
+
+// ----- Firestore-backed CRUD -----
+
+async function submitRequest() {
+  let period = document.getElementById('period-select').value;
+  const num = parseInt(document.getElementById('student-count').value, 10);
+  const subject = document.getElementById('subject').value.trim();
+  const grade = document.getElementById('grade-level').value.trim();
+  const notes = document.getElementById('notes').value.trim();
+
+  // Enforce "signed in" (silent fail)
+if (!currentTeacherLastName) return;
+
+  if (!num || num < 1) {
+    alert('Enter a valid number of students.');
+    return;
+  }
+
+  period = normalizePeriod(period);
+
+  // Capacity check
+  if (period) {
+    const key = `${activeDate}-${period}`;
+    const current = counts[key] || 0;
+    if (current + num > 15) {
+      alert('This request would exceed the 15-student limit for that period.');
+      return;
+    }
+  }
+
+  try {
+    await db.collection("requests").add({
+      dateKey: activeDate,
+      period: period || "",
+      num,
+      subject,
+      grade,
+      notes,
+      teacherLastName: currentTeacherLastName   // stamp who made the entry
+    });
+
+    closeModal();
+  } catch (e) {
+    console.error("Error adding document:", e);
+    alert("Error saving request: " + e.message);
+  }
+}
+
+/* EDIT FUNCTIONS */
+function openEditModal(dateKey, index) {
+
+if (!currentTeacherLastName) {
+  closeEditModal();
+  closeDetailsModal();
+  openSignInModal('Please enter your last name to sign in before editing requests.');
+  return;
+}
+
+  editing = { dateKey, index };
+  const r = requests[dateKey][index];
+
+  document.getElementById('edit-modal-date').textContent = `Edit Request: ${dateKey}`;
+
+  const sel = document.getElementById('edit-period-select');
+  sel.innerHTML = '<option value="">-- No specific period --</option>';
+  periods.forEach(p => sel.innerHTML += `<option>${p}</option>`);
+  sel.value = normalizePeriod(r.period);
+
+  document.getElementById('edit-student-count').value = r.num;
+  document.getElementById('edit-subject').value = r.subject;
+  document.getElementById('edit-grade-level').value = r.grade;
+  document.getElementById('edit-notes').value = r.notes;
+
+  sel.onchange = updateEditCapacity;
+  document.getElementById('edit-student-count').oninput = updateEditCapacity;
+
+  updateEditCapacity();
+
+  document.getElementById('edit-modal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').style.display = 'none';
+}
+
+function updateEditCapacity() {
+  if (!editing) return;
+  const { dateKey, index } = editing;
+  const r = requests[dateKey][index];
+  let period = document.getElementById('edit-period-select').value;
+  const num = parseInt(document.getElementById('edit-student-count').value, 10) || 0;
+
+  if (!period) {
+    const ind = document.getElementById('edit-capacity-indicator');
+    ind.style.backgroundColor = '#777';
+    ind.textContent = 'No specific period selected.';
+    return;
+  }
+
+  period = normalizePeriod(period);
+
+  let current = counts[`${dateKey}-${period}`] || 0;
+  if (normalizePeriod(r.period) === period) {
+    current -= r.num; // don't double-count the request being edited
+  }
+
+  const total = current + num;
+  const remaining = Math.max(15 - current, 0);
+
+  const ind = document.getElementById('edit-capacity-indicator');
+  ind.style.backgroundColor = capacityColor(total);
+  ind.textContent = `Current total for ${period}: ${current} | Remaining capacity: ${remaining} | With this change: ${total}/15`;
+}
+
+async function saveEdit() {
+  const { dateKey, index } = editing;
+  const old = requests[dateKey][index];
+
+  let period = document.getElementById('edit-period-select').value;
+  const num = parseInt(document.getElementById('edit-student-count').value, 10);
+  const subject = document.getElementById('edit-subject').value.trim();
+  const grade = document.getElementById('edit-grade-level').value.trim();
+  const notes = document.getElementById('edit-notes').value.trim();
+
+  if (!num || num < 1) {
+    alert('Enter a valid number of students.');
+    return;
+  }
+
+  period = normalizePeriod(period);
+
+  if (period) {
+    let current = counts[`${dateKey}-${period}`] || 0;
+    if (normalizePeriod(old.period) === period) {
+      current -= old.num;
+    }
+    if (current + num > 15) {
+      alert('This edit would exceed the 15-student limit for that period.');
+      return;
+    }
+  }
+
+  try {
+    await db.collection("requests").doc(old.id).update({
+      dateKey,
+      period: period || "",
+      num,
+      subject,
+      grade,
+      notes
+    });
+
+    closeEditModal();
+  } catch (e) {
+    console.error("Error updating document:", e);
+    alert("Error saving changes: " + e.message);
+  }
+}
+
+async function deleteRequest() {
+  const { dateKey, index } = editing;
+  const r = requests[dateKey][index];
+
+  try {
+    await db.collection("requests").doc(r.id).delete();
+    closeEditModal();
+  } catch (e) {
+    console.error("Error deleting document:", e);
+    alert("Error deleting request: " + e.message);
+  }
+}
+
+/* DETAILS MODAL: show all requests for a day+period */
+function openDetailsModal(dateKey, periodName) {
+  const title = document.getElementById('details-title');
+  const body = document.getElementById('details-body');
+  title.textContent = `${periodName} – ${dateKey}`;
+  body.innerHTML = '';
+
+  if (!requests[dateKey]) {
+    body.textContent = 'No requests found.';
+  } else {
+    const normalized = normalizePeriod(periodName);
+    const matches = [];
+
+    requests[dateKey].forEach((r, idx) => {
+      const p = r.period ? normalizePeriod(r.period) : "General";
+      if (p === normalized || (normalized === "General" && p === "General")) {
+        matches.push({ r, idx });
+      }
+    });
+
+    if (!matches.length) {
+      body.textContent = 'No requests found.';
+    } else {
+      matches.forEach(({ r, idx }) => {
+        const entryDiv = document.createElement('div');
+        entryDiv.className = 'details-entry';
+
+        const meta = document.createElement('div');
+        meta.className = 'details-meta';
+        meta.textContent =
+          `${r.num} student${r.num > 1 ? 's' : ''}` +
+          (r.subject ? ` | Subject: ${r.subject}` : '') +
+          (r.grade ? ` | Grade: ${r.grade}` : '') +
+          (r.teacherLastName ? ` | Teacher: ${r.teacherLastName}` : '');
+        entryDiv.appendChild(meta);
+
+        if (r.notes) {
+          const notes = document.createElement('div');
+          notes.className = 'details-notes';
+          notes.textContent = `Notes: ${r.notes}`;
+          entryDiv.appendChild(notes);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'details-actions';
+        const editBtn = document.createElement('button');
+        editBtn.textContent = 'Edit';
+        editBtn.onclick = () => {
+          closeDetailsModal();
+          openEditModal(dateKey, idx);
+        };
+        actions.appendChild(editBtn);
+        entryDiv.appendChild(actions);
+
+        body.appendChild(entryDiv);
+      });
+    }
+  }
+
+  document.getElementById('details-modal').style.display = 'flex';
+}
+
+function closeDetailsModal() {
+  document.getElementById('details-modal').style.display = 'none';
+}
+
+// Initial calendar & realtime listener (reads)
+renderCalendar();
+startRealtimeListener();
+</script>
+</body>
+</html>
