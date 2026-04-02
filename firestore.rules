@@ -1,16 +1,37 @@
-
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // All requests stored here
-    match /requests/{requestId} {
+    function isSignedIn() {
+      return request.auth != null;
+    }
 
-      // Any user can read the information
-      allow read: if true; 
-      // Only authenticated users in the CT Tech domain may write
-      allow write: if true;
+    function isCttechUser() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('^[A-Za-z0-9._%+-]+@cttech\\.org$');
+    }
+
+    function isOwner() {
+      return resource.data.teacherUid == request.auth.uid
+        || resource.data.teacherEmail == request.auth.token.email;
+    }
+
+    function creatingOwnRequest() {
+      return request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.teacherEmail == request.auth.token.email;
+    }
+
+    match /requests/{requestId} {
+      // Calendar visibility remains open to all viewers.
+      allow read: if true;
+
+      // Only authenticated cttech.org users can create requests for themselves.
+      allow create: if isCttechUser() && creatingOwnRequest();
+
+      // Only the original authenticated owner can edit/delete their request.
+      allow update, delete: if isCttechUser() && isOwner();
     }
   }
 }
