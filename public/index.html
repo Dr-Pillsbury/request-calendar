@@ -161,7 +161,7 @@
   }
 
   /* Modals */
-  #modal, #edit-modal, #details-modal {
+  #modal, #edit-modal, #details-modal, #advance-notice-modal {
     display: none;
     position: fixed;
     top: 0; left: 0;
@@ -399,6 +399,18 @@
   </div>
 </div>
 
+<!-- 48-HOUR ADVANCE NOTICE MODAL -->
+<div id="advance-notice-modal">
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Advance notice required</h3>
+    <div id="advance-notice-message" style="font-size:13px; margin-bottom:10px;"></div>
+
+    <div style="text-align:right; margin-top:10px;">
+      <button onclick="closeAdvanceNoticeModal()">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- SIGN-IN REQUIRED MODAL (Google Sites safe) -->
 <div id="signin-modal">
   <div class="modal-content">
@@ -462,6 +474,18 @@ let editing = null;  // { dateKey, index }
 let pendingDateKey = null;
 let unsubscribeListener = null;
 const advanceNoticeMessage = "Requests for a separate setting must be submitted at least 48 hours in advance. Please note that, due to space limitations and the availability of support staff, we may not always be able to accommodate students in a separate setting. Please select an alternate date.";
+
+function openAdvanceNoticeModal(message) {
+  const modal = document.getElementById('advance-notice-modal');
+  const text = document.getElementById('advance-notice-message');
+  if (text) text.textContent = message || advanceNoticeMessage;
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeAdvanceNoticeModal() {
+  const modal = document.getElementById('advance-notice-modal');
+  if (modal) modal.style.display = 'none';
+}
 
 /* Color for capacity indicator based on TOTAL students */
 function capacityColor(total) {
@@ -791,7 +815,7 @@ if (signOutBtn) signOutBtn.onclick = signOutCurrentUser;
 
 function openModal(dateKey) {
   if (!isRequestDateEligible(dateKey)) {
-    alert(advanceNoticeMessage);
+    openAdvanceNoticeModal(advanceNoticeMessage);
     return;
   }
 
@@ -851,8 +875,8 @@ function updateNewCapacity() {
 
 async function submitRequest() {
   if (!isRequestDateEligible(activeDate)) {
-    alert(advanceNoticeMessage);
     closeModal();
+    openAdvanceNoticeModal(advanceNoticeMessage);
     return;
   }
 
