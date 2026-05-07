@@ -464,6 +464,7 @@ let counts = {};      // per date+period (normalized)
 let requests = {};    // per date, list of requests
 let currentTeacherLastName = "";
 let currentUser = null;
+let isAdminWhitelisted = false;
 
 let today = new Date();
 let currentMonth = today.getMonth();
@@ -713,9 +714,11 @@ function isRequestDateEligible(dateKey) {
   const targetDate = new Date(year, month - 1, day);
   const now = new Date();
   const diffMs = targetDate.getTime() - now.getTime();
-  const fortyEightHoursMs = 48 * 60 * 60 * 1000;
+  const thirtySixHoursMs = 36 * 60 * 60 * 1000;
 
-  return diffMs >= fortyEightHoursMs;
+  if (isAdminWhitelisted) return true;
+
+  return diffMs >= thirtySixHoursMs;
 }
 
 function deriveTeacherLastName(user) {
@@ -727,6 +730,21 @@ function deriveTeacherLastName(user) {
   if (parts.length === 1) return titleCase(parts[0]);
 
   return "";
+}
+
+async function refreshAdminWhitelistStatus() {
+  isAdminWhitelisted = false;
+
+  if (!currentUser || !currentUser.email) return;
+
+  const email = currentUser.email.toLowerCase();
+
+  try {
+    const adminDoc = await db.collection("adminWhitelist").doc(email).get();
+    isAdminWhitelisted = adminDoc.exists;
+  } catch (error) {
+    console.error("Error checking admin whitelist:", error);
+  }
 }
 
 function updateAuthUi() {
@@ -1121,7 +1139,7 @@ function closeDetailsModal() {
 renderCalendar();
 startRealtimeListener();
 
-auth.onAuthStateChanged((user) => {
+auth.onAuthStateChanged(async (user) => {
   currentUser = user || null;
   if (currentUser) {
     const email = (currentUser.email || "").toLowerCase();
@@ -1133,6 +1151,7 @@ auth.onAuthStateChanged((user) => {
     }
   }
 
+  await refreshAdminWhitelistStatus();
   updateAuthUi();
 
   if (currentUser && pendingDateKey) {

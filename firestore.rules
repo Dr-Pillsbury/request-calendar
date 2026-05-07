@@ -23,6 +23,11 @@ service cloud.firestore {
         && request.resource.data.teacherEmail == request.auth.token.email;
     }
 
+    function isAdminWhitelisted() {
+      return isCttechUser()
+        && exists(/databases/$(database)/documents/adminWhitelist/$(request.auth.token.email));
+    }
+
     match /requests/{requestId} {
       // Calendar visibility remains open to all viewers.
       allow read: if true;
@@ -30,8 +35,17 @@ service cloud.firestore {
       // Only authenticated cttech.org users can create requests for themselves.
       allow create: if isCttechUser() && creatingOwnRequest();
 
+      // Admin-whitelisted users can create requests on behalf of others.
+      allow create: if isAdminWhitelisted();
+
       // Only the original authenticated owner can edit/delete their request.
       allow update, delete: if isCttechUser() && isOwner();
+    }
+
+    // Admin whitelist entries are readable by signed-in cttech users.
+    match /adminWhitelist/{email} {
+      allow read: if isCttechUser();
+      allow write: if false;
     }
   }
 }
